@@ -215,6 +215,7 @@ function attachKnob(k, i) {
   let drag = null;
   k.addEventListener('pointerdown', (e) => {
     k.setPointerCapture(e.pointerId);
+    k.classList.add('active');
     drag = { x: e.clientX, y: e.clientY, moved: false };
     ensureAudio();
   });
@@ -228,13 +229,10 @@ function attachKnob(k, i) {
   const end = () => {
     if (drag && drag.moved && !playing) audition();
     drag = null;
+    k.classList.remove('active');
   };
   k.addEventListener('pointerup', end);
-  k.addEventListener('pointercancel', () => { drag = null; });
-  k.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    setKnob(i, cur().params[i] - e.deltaY * 0.0005 * (e.shiftKey ? 0.2 : 1));
-  }, { passive: false });
+  k.addEventListener('pointercancel', () => { drag = null; k.classList.remove('active'); });
   k.addEventListener('dblclick', () => { setKnob(i, DSP.DEFAULTS[i]); if (!playing) audition(); });
 }
 

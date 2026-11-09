@@ -1,6 +1,6 @@
 # Kickin
 
-A JavaScript port of the Rust app in `../app`, plus a 16-step sequencer where every step holds its own complete kick.
+A browser sine kick synth with a 16-step sequencer where every step holds its own complete kick.
 
 ## Run it
 
@@ -9,10 +9,10 @@ Live at https://johnnyhawk02.github.io/kickin/ — or open `index.html` in Chrom
 
 ## Files
 
-- `dsp.js` — the engine, ported line for line from `app/src/dsp.rs` (curve tables, voice, sample-rate factors, display text). Also holds the sequencer clock and the offline pattern renderer.
-- `presets.js` — the 27 factory presets from `app/src/presets.rs`.
+- `dsp.js` — the engine: curve tables, voice, sample-rate factors and display text. Also holds the sequencer clock and the offline pattern renderer.
+- `presets.js` — the 27 factory presets.
 - `app.js` — UI, AudioWorklet playback, sequencer, WAV export.
-- `test.js` — `node test.js`: the same checks as the Rust test (peak, start/end pitch, silent tail) plus a pattern render check.
+- `test.js` — `node test.js`: engine checks (peak, start/end pitch, silent tail) plus a pattern render check.
 
 ## Sequencer
 
