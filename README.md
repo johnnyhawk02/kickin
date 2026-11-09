@@ -1,10 +1,10 @@
-# Sine Kick — browser version
+# Kickin
 
 A JavaScript port of the Rust app in `../app`, plus a 16-step sequencer where every step holds its own complete kick.
 
 ## Run it
 
-Open `index.html` in Chrome, Edge, Firefox or Safari. No build, no server, no install.
+Live at https://johnnyhawk02.github.io/kickin/ — or open `index.html` in Chrome, Edge, Firefox or Safari. No build, no server, no install.
 (If your browser refuses to start audio from a local file, run `python3 -m http.server` in this folder and open http://localhost:8000.)
 
 ## Files

@@ -1,4 +1,4 @@
-// Sine Kick (browser) — UI, audio and the per-step sequencer.
+// Kickin (browser) — UI, audio and the per-step sequencer.
 'use strict';
 
 const DSP = SineKickDSP();
@@ -541,7 +541,7 @@ function init() {
   $('#saveHit').onclick = () => {
     const rate = SAMPLE_RATES[rateIdx];
     const { out } = DSP.render(cur().params, rate, TABLES);
-    download(wav24(out, rate), `Sine Kick - step ${sel + 1} - ${(cur().name || 'Custom').replace(/[*\/\\:]/g, '')}.wav`);
+    download(wav24(out, rate), `Kickin - step ${sel + 1} - ${(cur().name || 'Custom').replace(/[*\/\\:]/g, '')}.wav`);
   };
   $('#saveLoop').onclick = () => {
     const rate = SAMPLE_RATES[rateIdx];
@@ -550,7 +550,7 @@ function init() {
     const two = DSP.renderPattern(pattern, rate, TABLES, 2);
     const loopLen = two.length / 2;
     const out = two.subarray(loopLen); // second pass already includes the first pass's tail
-    download(wav24(out, rate), `Sine Kick loop - ${pattern.bpm} bpm.wav`);
+    download(wav24(out, rate), `Kickin loop - ${pattern.bpm} bpm.wav`);
   };
 
   window.addEventListener('keydown', (e) => {
