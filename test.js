@@ -33,6 +33,16 @@ for (let a = 0; a < D.ALGORITHMS.length; a++) {
   p[D.FEEDBACK] = 1;
   assert(D.render(p, 44100, t).out.every(Number.isFinite), 'algorithm ' + a);
 }
+// MORPH: off = steps jump exactly, on = glides (output differs, stays finite)
+{
+  const mk = (m) => ({ bpm: 124, swing: 0, morph: m, length: 16, steps: Array.from({ length: 16 }, (_, i) => ({ on: i % 4 === 0, params: presets[[2, 4, 8, 5][i >> 2]][1].slice() })) });
+  const a = D.renderPattern(mk(0), 48000, t, 1), b = D.renderPattern(mk(1), 48000, t, 1);
+  assert(b.every(Number.isFinite));
+  let d = 0; for (let i = 0; i < a.length; i++) d += Math.abs(a[i] - b[i]);
+  assert(d / a.length > 0.01, 'morph has no effect');
+  // first hit of a pattern is never morphed
+  for (let i = 0; i < 2000; i++) assert(Math.abs(a[i] - b[i]) < 1e-9, 'first hit differs');
+}
 // old 10-knob steps still load
 assert.strictEqual(D.upgrade([0.8, 0, 0.5, 0.5, 0.2, 0.5, 0.5, 1, 0, 0]).length, D.NUM_PARAMS);
 console.log('ok  peak', peak.toFixed(3), 'start', p[0].toFixed(2), 'pattern samples', buf.length);

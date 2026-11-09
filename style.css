@@ -104,3 +104,5 @@ input[type=range] { accent-color: var(--accent); width: 90px; }
 #ops .knob { min-width: 56px; }
 #ops .knob svg { width: 56px; height: 56px; }
 #ops { flex-wrap: wrap; }
+.knob.morph .val { color: var(--text); }
+.knob.morph .fill { stroke: var(--pitch); }

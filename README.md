@@ -20,6 +20,7 @@ Live at https://johnnyhawk02.github.io/kickin/ — or open `index.html` in Chrom
 - 16 steps, and each step stores every setting: the envelope, the pitch sweep, all four operators, feedback and algorithm.
 - Click a step to edit it. The knobs, display, preset menu and RANDOM then act on that step. Click the light on a step to switch it on or off.
 - BPM, swing and pattern length (1–16 steps). You can copy and paste a kick between steps, push one kick to every active step, or randomise all active steps.
+- **MORPH** (in the SEQUENCE panel) smooths the change from one step to the next. At 0 each step plays its own kick exactly. Turn it up and every knob glides from the kick that was playing toward the new step's kick, over up to about two steps' time. The algorithm still switches straight away. SAVE LOOP includes the morph.
 - The step clock runs inside the audio thread, so timing is sample-accurate.
 - SAVE HIT writes the selected step as a 24-bit mono WAV. SAVE LOOP writes one bar of the pattern that loops cleanly. 44.1k / 48k / 96k picks the sample rate.
 - Your pattern is saved in the browser automatically.

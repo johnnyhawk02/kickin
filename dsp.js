@@ -294,28 +294,112 @@ function SineKickDSP() {
     return stepIndex % 2 === 0 ? base * (1 + sw / 2) : base * (1 - sw / 2);
   }
 
-  // Offline render of `loops` passes of the pattern through one voice, so
-  // consecutive hits interact exactly as they do live.
+  // MORPH (pattern.morph, 0..1): instead of jumping, every knob glides from the
+  // kick that was playing toward the new step's kick. The glide time constant is
+  // morph x 2 steps, so 100% smears a change over roughly two to four steps.
+  // The algorithm always switches straight away.
+  function morphTauSamples(pattern, sr) {
+    const m = pattern.morph || 0;
+    return m * 2 * (60 / pattern.bpm) / 4 * sr;
+  }
+  const MORPH_BLOCK = 32;
+
+  // One voice + the step clock + morph. Used by the live AudioWorklet and by the
+  // offline loop export, so both sound the same.
+  class SeqPlayer {
+    constructor(sampleRate, tables) {
+      this.sr = sampleRate;
+      this.voice = new Voice(sampleRate, tables);
+      this.cur = Float64Array.from(DEFAULTS);
+      this.target = null;
+      this.blk = 0;
+      this.pattern = null;
+      this.playing = false;
+      this.fresh = true;
+      this.step = 0;
+      this.toNext = 0;
+      this.sounding = -1; // step whose kick is playing (-1 = audition)
+      this.onStep = null;
+    }
+    jumpTo(params) {
+      this.cur.set(upgrade(params));
+      this.target = null;
+      this.voice.setParams(this.cur);
+    }
+    glideTo(params) {
+      const t = upgrade(params);
+      if (this.fresh || !this.pattern || !(this.pattern.morph > 0)) {
+        this.jumpTo(t);
+        if (this.fresh) { this.voice.settle(); this.fresh = false; }
+        return;
+      }
+      this.target = Float64Array.from(t);
+      this.cur[ALGO] = t[ALGO];
+      this.voice.setParams(this.cur);
+    }
+    setPattern(p) {
+      this.pattern = p;
+      // live edit of the step that is ringing, like turning a knob while it plays
+      if (this.sounding >= 0 && p.steps[this.sounding]) this.glideTo(p.steps[this.sounding].params);
+    }
+    editStep(step, params) {
+      if (this.sounding === step) this.glideTo(params);
+    }
+    hit(params, step) {
+      this.jumpTo(params);
+      this.sounding = step;
+      this.voice.trigger(48, 1);
+    }
+    start() { this.playing = true; this.fresh = true; this.step = 0; this.toNext = 0; }
+    stop() { this.playing = false; }
+    next(offset) {
+      const pat = this.pattern;
+      if (this.playing && pat) {
+        if (this.toNext <= 0) {
+          if (this.step >= pat.length) this.step = 0;
+          const s = pat.steps[this.step];
+          if (s.on) {
+            this.glideTo(s.params);
+            this.sounding = this.step;
+            this.voice.trigger(48, 1);
+          }
+          if (this.onStep) this.onStep(this.step, offset);
+          this.toNext += samplesPerStep(pat, this.sr, this.step);
+          this.step = (this.step + 1) % pat.length;
+        }
+        this.toNext -= 1;
+      }
+      if (this.target && ++this.blk >= MORPH_BLOCK) {
+        this.blk = 0;
+        const tau = Math.max(1, morphTauSamples(pat || { bpm: 120 }, this.sr));
+        const k = 1 - Math.exp(-MORPH_BLOCK / tau);
+        let left = 0;
+        for (let i = 0; i < NUM_PARAMS; i++) {
+          const d = this.target[i] - this.cur[i];
+          this.cur[i] += d * k;
+          if (Math.abs(d) > left) left = Math.abs(d);
+        }
+        if (left < 1e-4) { this.cur.set(this.target); this.target = null; }
+        this.voice.setParams(this.cur);
+      }
+      return this.voice.next();
+    }
+  }
+
+  // Offline render of `loops` passes of the pattern, through the same player as live.
   function renderPattern(pattern, sampleRate, tables, loops = 1) {
-    const v = new Voice(sampleRate, tables);
-    const first = pattern.steps.find((s, i) => i < pattern.length && s.on);
-    if (first) { v.setParams(first.params); v.settle(); }
+    const pl = new SeqPlayer(sampleRate, tables);
+    pl.setPattern(pattern);
+    pl.start();
     let total = 0;
     for (let i = 0; i < pattern.length; i++) total += samplesPerStep(pattern, sampleRate, i);
     const loopLen = Math.round(total);
     const tail = loops === 1 ? Math.round(sampleRate * 1.2) : 0;
     const n = loopLen * loops + tail;
     const out = new Float32Array(n);
-    let nextStepAt = 0, step = 0, acc = 0;
     for (let i = 0; i < n; i++) {
-      if (i >= nextStepAt && i < loopLen * loops) {
-        const s = pattern.steps[step];
-        if (s && s.on) { v.setParams(s.params); v.trigger(48, 1); }
-        acc += samplesPerStep(pattern, sampleRate, step);
-        nextStepAt = Math.round(acc);
-        step = (step + 1) % pattern.length;
-      }
-      out[i] = v.next();
+      if (i === loopLen * loops) pl.stop();
+      out[i] = pl.next(i);
     }
     return out;
   }
@@ -363,7 +447,7 @@ function SineKickDSP() {
 
   return { CURVE_ROWS, CURVE_COLS, KEYS, NUM_PARAMS, RATIO, LEVEL, OPDECAY, FEEDBACK, ALGO,
     RATIOS, ratioKnob, ALGORITHMS, algoKnob, upgrade, DEFAULTS, makeTables, lookup, P, rateFactors,
-    Voice, render, samplesPerStep, renderPattern, noteName, display };
+    Voice, SeqPlayer, morphTauSamples, render, samplesPerStep, renderPattern, noteName, display };
 }
 
 if (typeof module !== 'undefined') module.exports = SineKickDSP;

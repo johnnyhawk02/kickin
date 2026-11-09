@@ -27,7 +27,7 @@ function defaultPattern() {
   set(11, 'Wood Knock');
   set(12, 'Gabber Grit');
   set(14, 'Wood Knock');
-  return { bpm: 124, swing: 0, length: 16, steps };
+  return { bpm: 124, swing: 0, morph: 0, length: 16, steps };
 }
 
 function loadPattern() {
@@ -71,55 +71,22 @@ function workletSource() {
     class KickProcessor extends AudioWorkletProcessor {
       constructor() {
         super();
-        this.voice = new DSP.Voice(sampleRate, TABLES);
-        this.pattern = null;
-        this.playing = false;
-        this.step = 0;
-        this.toNext = 0;
-        this.sounding = -1; // step index whose params the voice is using (-1 = audition)
+        this.player = new DSP.SeqPlayer(sampleRate, TABLES);
+        this.player.onStep = (step, i) => this.port.postMessage({ type: 'step', step, at: currentTime + i / sampleRate });
         this.port.onmessage = (e) => this.onMsg(e.data);
       }
       onMsg(m) {
-        if (m.type === 'pattern') {
-          this.pattern = m.pattern;
-          // live-edit the step that is ringing right now, like turning a knob on the plugin
-          if (this.sounding >= 0 && this.pattern.steps[this.sounding]) {
-            this.voice.setParams(this.pattern.steps[this.sounding].params);
-          }
-        } else if (m.type === 'play') {
-          this.playing = true; this.step = 0; this.toNext = 0;
-        } else if (m.type === 'stop') {
-          this.playing = false;
-        } else if (m.type === 'hit') {
-          this.voice.setParams(m.params);
-          this.sounding = m.step;
-          this.voice.trigger(48, 1);
-        } else if (m.type === 'params') {
-          if (this.sounding === m.step) this.voice.setParams(m.params);
-        }
+        const pl = this.player;
+        if (m.type === 'pattern') pl.setPattern(m.pattern);
+        else if (m.type === 'play') pl.start();
+        else if (m.type === 'stop') pl.stop();
+        else if (m.type === 'hit') pl.hit(m.params, m.step);
+        else if (m.type === 'params') pl.editStep(m.step, m.params);
       }
       process(inputs, outputs) {
-        const out = outputs[0];
-        const L = out[0], R = out[1];
-        const n = L.length;
-        const pat = this.pattern;
-        for (let i = 0; i < n; i++) {
-          if (this.playing && pat) {
-            if (this.toNext <= 0) {
-              if (this.step >= pat.length) this.step = 0;
-              const s = pat.steps[this.step];
-              if (s.on) {
-                this.voice.setParams(s.params);
-                this.sounding = this.step;
-                this.voice.trigger(48, 1);
-              }
-              this.port.postMessage({ type: 'step', step: this.step, at: currentTime + i / sampleRate });
-              this.toNext += DSP.samplesPerStep(pat, sampleRate, this.step);
-              this.step = (this.step + 1) % pat.length;
-            }
-            this.toNext -= 1;
-          }
-          let v = this.voice.next();
+        const L = outputs[0][0], R = outputs[0][1];
+        for (let i = 0; i < L.length; i++) {
+          let v = this.player.next(i);
           v = v < -1 ? -1 : v > 1 ? 1 : v;
           L[i] = v;
           if (R) R[i] = v;
@@ -192,6 +159,12 @@ function arcPath(cx, cy, r, from, to) {
   return `M${x0.toFixed(2)},${y0.toFixed(2)} A${r},${r} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)}`;
 }
 
+const KNOB_SVG = `<svg viewBox="0 0 64 64">
+    <path class="track" d="${arcPath(32, 32, 27, A0, A0 + SWEEP)}" stroke="rgb(50,54,64)" stroke-width="4" fill="none" stroke-linecap="round"/>
+    <path class="fill" stroke="rgb(255,156,46)" stroke-width="4" fill="none" stroke-linecap="round"/>
+    <circle class="body" cx="32" cy="32" r="21" fill="rgb(58,62,74)" stroke="rgb(90,96,110)"/>
+    <line class="ptr" stroke="rgb(222,224,230)" stroke-width="3" stroke-linecap="round"/>
+  </svg>`;
 const opHeads = [];
 function buildKnobs() {
   const groups = GROUPS.map(([t, idxs]) => [$('#knobs'), t, idxs, -1])
@@ -205,12 +178,7 @@ function buildKnobs() {
     const row = el('div', 'row');
     for (const i of idxs) {
       const k = el('div', 'knob' + (PITCH_KNOBS.has(i) ? ' pitch' : '') + (i >= DSP.RATIO ? ' fm' : ''));
-      k.innerHTML = `<svg viewBox="0 0 64 64">
-          <path class="track" d="${arcPath(32, 32, 27, A0, A0 + SWEEP)}" stroke="rgb(50,54,64)" stroke-width="4" fill="none" stroke-linecap="round"/>
-          <path class="fill" stroke="rgb(255,156,46)" stroke-width="4" fill="none" stroke-linecap="round"/>
-          <circle class="body" cx="32" cy="32" r="21" fill="rgb(58,62,74)" stroke="rgb(90,96,110)"/>
-          <line class="ptr" stroke="rgb(222,224,230)" stroke-width="3" stroke-linecap="round"/>
-        </svg><div class="name">${KNOB_NAMES[i]}</div><div class="val"></div>`;
+      k.innerHTML = KNOB_SVG + `<div class="name">${KNOB_NAMES[i]}</div><div class="val"></div>`;
       attachKnob(k, i);
       row.appendChild(k);
       knobEls[i] = k;
@@ -233,7 +201,46 @@ function buildKnobs() {
   $('#ops').appendChild(a);
 }
 
-function attachKnob(k, i) {
+// MORPH lives on the pattern, not on a step: it smooths the changes between steps.
+const morphGet = () => pattern.morph || 0;
+function morphSet(v) {
+  pattern.morph = Math.min(1, Math.max(0, v));
+  drawMorph(); sendPattern(); persist();
+}
+function morphText() {
+  const m = morphGet();
+  if (m < 0.005) return 'Off (steps jump)';
+  const ms = DSP.morphTauSamples(pattern, 1000);
+  return Math.round(m * 100) + '% · ' + (ms >= 1000 ? (ms / 1000).toFixed(2) + ' s' : Math.round(ms) + ' ms');
+}
+function drawKnobFace(k, v) {
+  const a = A0 + SWEEP * v;
+  k.querySelector('.fill').setAttribute('d', v > 0.001 ? arcPath(32, 32, 27, A0, a) : '');
+  const ptr = k.querySelector('.ptr');
+  ptr.setAttribute('x1', 32 + Math.cos(a) * 21 * 0.3); ptr.setAttribute('y1', 32 + Math.sin(a) * 21 * 0.3);
+  ptr.setAttribute('x2', 32 + Math.cos(a) * 21 * 0.9); ptr.setAttribute('y2', 32 + Math.sin(a) * 21 * 0.9);
+}
+let morphKnob = null;
+function drawMorph() {
+  drawKnobFace(morphKnob, morphGet());
+  morphKnob.querySelector('.val').textContent = morphText();
+}
+function buildMorph() {
+  const g = el('div', 'kgroup morph');
+  g.style.flex = '1.3 1 0';
+  g.appendChild(el('h3', null, 'SEQUENCE'));
+  const row = el('div', 'row');
+  const k = el('div', 'knob morph');
+  k.title = 'Glide every knob from one step\'s kick to the next instead of jumping. Applies to the whole pattern.';
+  k.innerHTML = KNOB_SVG + '<div class="name">MORPH</div><div class="val"></div>';
+  attachKnob(k, -1, morphGet, morphSet, 0);
+  row.appendChild(k); g.appendChild(row);
+  $('#knobs').appendChild(g);
+  morphKnob = k;
+  drawMorph();
+}
+
+function attachKnob(k, i, get = () => cur().params[i], set = (v) => setKnob(i, v), reset = DSP.DEFAULTS[i]) {
   let drag = null;
   k.addEventListener('pointerdown', (e) => {
     k.setPointerCapture(e.pointerId);
@@ -246,16 +253,16 @@ function attachKnob(k, i) {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     drag.x = e.clientX; drag.y = e.clientY;
     if (dx || dy) drag.moved = true;
-    setKnob(i, cur().params[i] + (dx - dy) * (e.shiftKey ? 0.0008 : 0.004));
+    set(get() + (dx - dy) * (e.shiftKey ? 0.0008 : 0.004));
   });
   const end = () => {
-    if (drag && drag.moved && !playing) audition();
+    if (drag && drag.moved && !playing && i >= 0) audition();
     drag = null;
     k.classList.remove('active');
   };
   k.addEventListener('pointerup', end);
   k.addEventListener('pointercancel', () => { drag = null; k.classList.remove('active'); });
-  k.addEventListener('dblclick', () => { setKnob(i, DSP.DEFAULTS[i]); if (!playing) audition(); });
+  k.addEventListener('dblclick', () => { set(reset); if (!playing && i >= 0) audition(); });
 }
 
 function setKnob(i, v) {
@@ -526,6 +533,7 @@ function syncTransportUI() {
 
 function init() {
   buildKnobs();
+  buildMorph();
   buildSeq();
 
   const ps = $('#preset');
@@ -541,7 +549,7 @@ function init() {
   len.onchange = () => { pattern.length = +len.value; drawSeq(); sendPattern(); persist(); };
   $('#bpm').onchange = () => {
     pattern.bpm = Math.max(40, Math.min(300, +$('#bpm').value || 120));
-    $('#bpm').value = pattern.bpm; sendPattern(); persist();
+    $('#bpm').value = pattern.bpm; drawMorph(); sendPattern(); persist();
   };
   $('#swing').oninput = () => {
     pattern.swing = +$('#swing').value;
