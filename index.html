@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sine Kick</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header class="bar">
+    <div class="logo">SINE KICK</div>
+    <div class="group transport">
+      <button id="playBtn" class="btn accent" title="Start / stop the sequencer (space)">▶ PLAY</button>
+      <label class="field">BPM <input id="bpm" type="number" min="40" max="300" step="1" value="124"></label>
+      <label class="field">SWING <input id="swing" type="range" min="0" max="0.6" step="0.01" value="0"><span id="swingVal">0%</span></label>
+      <label class="field">STEPS <select id="length"></select></label>
+    </div>
+    <div class="group right">
+      <div class="rates" id="rates"></div>
+      <button id="saveHit" class="btn" title="Save the selected step's kick as a WAV">SAVE HIT</button>
+      <button id="saveLoop" class="btn accent" title="Render the whole pattern to a WAV">SAVE LOOP</button>
+    </div>
+  </header>
+
+  <section class="mid">
+    <div class="display-wrap">
+      <canvas id="display"></canvas>
+    </div>
+    <button id="pad" class="pad" title="Audition the selected step (enter)">
+      <svg viewBox="0 0 40 40"><polygon points="12,8 32,20 12,32"/></svg>
+      <span>PLAY STEP <em id="padStep">1</em><br><small>(enter)</small></span>
+    </button>
+  </section>
+
+  <section class="editbar">
+    <div class="group">
+      <span class="label">EDITING STEP <b id="editStep">1</b></span>
+      <button id="prevPreset" class="btn sq" title="Previous preset">◀</button>
+      <select id="preset" title="Load a factory preset into the selected step"></select>
+      <button id="nextPreset" class="btn sq" title="Next preset">▶</button>
+      <button id="random" class="btn" title="Random kick on the selected step">RANDOM</button>
+    </div>
+    <div class="group">
+      <button id="copy" class="btn" title="Copy the selected step's kick (ctrl/cmd+C)">COPY</button>
+      <button id="paste" class="btn" title="Paste onto the selected step (ctrl/cmd+V)">PASTE</button>
+      <button id="toAll" class="btn" title="Copy this kick to every active step">TO ALL ON</button>
+      <button id="randomAll" class="btn" title="Random kick on every active step">RANDOM ALL</button>
+      <button id="clear" class="btn" title="Turn every step off">CLEAR</button>
+    </div>
+  </section>
+
+  <section class="knobs" id="knobs"></section>
+
+  <section class="seq" id="seq"></section>
+
+  <footer class="hint">
+    Click a step to edit its kick, click its light to switch it on/off. Drag knobs (shift = fine), scroll to nudge, double-click to reset.
+    Space = play/stop · Enter = audition · ←/→ = select step · 1–9,0 = toggle step.
+  </footer>
+</div>
+<script src="dsp.js"></script>
+<script src="presets.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
