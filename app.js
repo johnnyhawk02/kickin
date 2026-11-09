@@ -1,14 +1,16 @@
-// Kickin (browser) — UI, audio and the per-step sequencer.
+// Kickin (browser): UI, audio and the per-step sequencer for the 4-operator FM kick.
 'use strict';
 
 const DSP = SineKickDSP();
 const TABLES = DSP.makeTables();
-const KNOB_NAMES = ['VOLUME', 'ATTACK', 'HOLD', 'DECAY', 'START', 'END', 'SWEEP', 'ATT CURVE', 'DEC CURVE', 'SWP CURVE'];
+const KNOB_NAMES = ['VOLUME', 'ATTACK', 'HOLD', 'DECAY', 'START', 'END', 'SWEEP', 'ATT CURVE', 'DEC CURVE', 'SWP CURVE',
+  'RATIO', 'RATIO', 'RATIO', 'RATIO', 'LEVEL', 'LEVEL', 'LEVEL', 'LEVEL', 'DECAY', 'DECAY', 'DECAY', 'DECAY', 'FEEDBACK'];
 const PITCH_KNOBS = new Set([4, 5, 6, 9]);
 const GROUPS = [['ENVELOPE', [1, 2, 3, 7, 8]], ['PITCH', [4, 5, 6, 9]], ['OUTPUT', [0]]];
+const OP_GROUPS = [0, 1, 2, 3].map((op) => [op, [DSP.RATIO + op, DSP.LEVEL + op, DSP.OPDECAY + op].concat(op === 3 ? [DSP.FEEDBACK] : [])]);
 const SAMPLE_RATES = [44100, 48000, 96000];
 const NUM_STEPS = 16;
-const STORE_KEY = 'sinekick.pattern.v1';
+const STORE_KEY = 'kickin.pattern.v2';
 
 const presetParams = (name) => {
   const p = FACTORY_PRESETS.find((x) => x[0] === name);
@@ -19,12 +21,12 @@ const presetParams = (name) => {
 function defaultPattern() {
   const steps = Array.from({ length: NUM_STEPS }, () => ({ on: false, params: DSP.DEFAULTS.slice(), name: 'Default' }));
   const set = (i, name) => { steps[i] = { on: true, params: presetParams(name), name }; };
-  set(0, 'Pitchblack 1');
-  set(4, 'Sub Heaven');
-  set(8, 'Pitchblack 1');
-  set(11, 'Soft Cake');
-  set(12, 'Tell Me 2');
-  set(14, 'Soft Cake');
+  set(0, 'Punch Click');
+  set(4, 'Metal Thud');
+  set(8, 'Punch Click');
+  set(11, 'Wood Knock');
+  set(12, 'Gabber Grit');
+  set(14, 'Wood Knock');
   return { bpm: 124, swing: 0, length: 16, steps };
 }
 
@@ -33,7 +35,10 @@ function loadPattern() {
     const raw = localStorage.getItem(STORE_KEY);
     if (raw) {
       const p = JSON.parse(raw);
-      if (p && Array.isArray(p.steps) && p.steps.length === NUM_STEPS) return p;
+      if (p && Array.isArray(p.steps) && p.steps.length === NUM_STEPS) {
+        p.steps.forEach((s) => { s.params = DSP.upgrade(s.params); });
+        return p;
+      }
     }
   } catch (e) { /* storage blocked: use default */ }
   return defaultPattern();
@@ -187,15 +192,19 @@ function arcPath(cx, cy, r, from, to) {
   return `M${x0.toFixed(2)},${y0.toFixed(2)} A${r},${r} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)}`;
 }
 
+const opHeads = [];
 function buildKnobs() {
-  const wrap = $('#knobs');
-  for (const [title, idxs] of GROUPS) {
-    const g = el('div', 'kgroup');
+  const groups = GROUPS.map(([t, idxs]) => [$('#knobs'), t, idxs, -1])
+    .concat(OP_GROUPS.map(([op, idxs]) => [$('#ops'), 'OP ' + (op + 1), idxs, op]));
+  for (const [wrap, title, idxs, op] of groups) {
+    const g = el('div', 'kgroup' + (op >= 0 ? ' op' : ''));
     g.style.flex = idxs.length + ' 1 0';
-    g.appendChild(el('h3', null, title));
+    const h = el('h3', null, title);
+    if (op >= 0) opHeads[op] = h;
+    g.appendChild(h);
     const row = el('div', 'row');
     for (const i of idxs) {
-      const k = el('div', 'knob' + (PITCH_KNOBS.has(i) ? ' pitch' : ''));
+      const k = el('div', 'knob' + (PITCH_KNOBS.has(i) ? ' pitch' : '') + (i >= DSP.RATIO ? ' fm' : ''));
       k.innerHTML = `<svg viewBox="0 0 64 64">
           <path class="track" d="${arcPath(32, 32, 27, A0, A0 + SWEEP)}" stroke="rgb(50,54,64)" stroke-width="4" fill="none" stroke-linecap="round"/>
           <path class="fill" stroke="rgb(255,156,46)" stroke-width="4" fill="none" stroke-linecap="round"/>
@@ -209,6 +218,19 @@ function buildKnobs() {
     g.appendChild(row);
     wrap.appendChild(g);
   }
+  // algorithm picker
+  const a = el('div', 'kgroup algo');
+  a.innerHTML = '<h3>ALGORITHM</h3>';
+  const sel = el('select'); sel.id = 'algo'; sel.title = 'How the four operators are wired (→ = modulates)';
+  DSP.ALGORITHMS.forEach((al, n) => sel.appendChild(new Option(String(n + 1), String(n))));
+  sel.onchange = () => { setKnob(DSP.ALGO, DSP.algoKnob(+sel.value)); if (!playing) audition(); };
+  const prev = el('button', 'btn sq', '◀'), next = el('button', 'btn sq', '▶');
+  const step = (d) => { const n = DSP.ALGORITHMS.length; setKnob(DSP.ALGO, DSP.algoKnob((DSP.P.algorithm(cur().params) + d + n) % n)); if (!playing) audition(); };
+  prev.onclick = () => step(-1); next.onclick = () => step(1);
+  const r = el('div', 'algorow'); r.append(prev, sel, next);
+  const legend = el('div', 'legend'); legend.id = 'algoLegend';
+  a.append(r, legend);
+  $('#ops').appendChild(a);
 }
 
 function attachKnob(k, i) {
@@ -248,7 +270,16 @@ function setKnob(i, v) {
 
 function drawKnobs() {
   const p = cur().params;
-  for (let i = 0; i < 10; i++) {
+  const alg = DSP.ALGORITHMS[DSP.P.algorithm(p)];
+  for (let op = 0; op < 4; op++) {
+    const car = alg.carriers.includes(op);
+    const targets = alg.mods.map((m, j) => (m.includes(op) ? j + 1 : 0)).filter(Boolean);
+    opHeads[op].innerHTML = `OP ${op + 1} <span class="${car ? 'car' : 'mod'}">${car ? 'OUT' : '→ ' + (targets.join(', ') || '–')}</span>`;
+    knobEls[DSP.LEVEL + op].querySelector('.name').textContent = car ? 'LEVEL' : 'INDEX';
+  }
+  $('#algo').value = String(DSP.P.algorithm(p));
+  $('#algoLegend').innerHTML = `<b>${alg.name}</b>carriers: ${alg.carriers.map((c) => c + 1).join(' + ')}`;
+  for (const i of Object.keys(knobEls).map(Number)) {
     const k = knobEls[i], v = p[i];
     const a = A0 + SWEEP * v;
     const fill = k.querySelector('.fill');
@@ -434,6 +465,22 @@ function randomParams() {
   p[7] = 0.6 + 0.4 * r();
   p[8] = 0.6 * r();
   p[9] = 0.5 * r();
+  // FM: op 1 is the body at ×1, the others add tone and click
+  const pick = (arr) => DSP.ratioKnob(arr[Math.floor(r() * arr.length)]);
+  p[DSP.RATIO] = DSP.ratioKnob(1);
+  p[DSP.RATIO + 1] = pick([0.5, 1, 1.5, 2, 3]);
+  p[DSP.RATIO + 2] = pick([1, 2, 3, 3.5, 5, 7]);
+  p[DSP.RATIO + 3] = pick([1, 2, 5, 7, 11, 13]);
+  p[DSP.LEVEL] = 1;
+  p[DSP.LEVEL + 1] = 0.5 * r();
+  p[DSP.LEVEL + 2] = r() < 0.5 ? 0 : 0.5 * r();
+  p[DSP.LEVEL + 3] = r() < 0.6 ? 0 : 0.5 * r();
+  p[DSP.OPDECAY] = 1;
+  p[DSP.OPDECAY + 1] = 0.05 + 0.4 * r();
+  p[DSP.OPDECAY + 2] = 0.03 + 0.3 * r();
+  p[DSP.OPDECAY + 3] = 0.02 + 0.2 * r();
+  p[DSP.FEEDBACK] = r() < 0.7 ? 0 : 0.6 * r();
+  p[DSP.ALGO] = DSP.algoKnob([0, 0, 0, 1, 2, 3, 6][Math.floor(r() * 7)]);
   return p;
 }
 

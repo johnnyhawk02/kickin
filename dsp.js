@@ -1,7 +1,10 @@
-// Sine kick engine, a line-for-line port of app/src/dsp.rs (see app/MECHANICS.md).
+// Kickin engine: a 4-operator FM kick.
 //
-// A sine oscillator whose pitch glides from a start frequency to an end
-// frequency along a curve, shaped by an attack / hold / decay envelope.
+// The pitch sweep (start -> end frequency along a curve) and the attack / hold /
+// decay amp envelope come from the original sine kick (port of app/src/dsp.rs).
+// The single sine is replaced by four FM operators that all follow the swept
+// pitch at their own ratio, each with its own level and decay envelope, wired
+// by one of eight algorithms. Operator 4 has feedback.
 //
 // Everything lives inside one factory function so the exact same source can be
 // stringified into the AudioWorklet (no build step, works from file://).
@@ -12,9 +15,40 @@ function SineKickDSP() {
   const TAU = Math.PI * 2;
 
   const KEYS = ['volume', 'attack', 'hold', 'decay', 'startFreq', 'endFreq',
-    'sweepTime', 'attackCurve', 'decayCurve', 'sweepCurve'];
+    'sweepTime', 'attackCurve', 'decayCurve', 'sweepCurve',
+    'ratio1', 'ratio2', 'ratio3', 'ratio4',
+    'level1', 'level2', 'level3', 'level4',
+    'opDecay1', 'opDecay2', 'opDecay3', 'opDecay4',
+    'feedback', 'algorithm'];
+  const NUM_PARAMS = KEYS.length; // 24
+  const RATIO = 10, LEVEL = 14, OPDECAY = 18, FEEDBACK = 22, ALGO = 23;
 
-  const DEFAULTS = [0.8, 0.0, 0.5, 0.5, 0.2, 0.5, 0.5, 1.0, 0.0, 0.0];
+  // Operator frequency ratios a ratio knob steps through.
+  const RATIOS = [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+  const ratioKnob = (r) => RATIOS.indexOf(r) / (RATIOS.length - 1);
+
+  // mods[j] = operators that modulate operator j (0 = op 1 ... 3 = op 4).
+  // Modulation always flows from a higher operator to a lower one.
+  const ALGORITHMS = [
+    { name: '4→3→2→1', mods: [[1], [2], [3], []], carriers: [0] },
+    { name: '(3+4)→2→1', mods: [[1], [2, 3], [], []], carriers: [0] },
+    { name: '(2 + 4→3)→1', mods: [[1, 2], [], [3], []], carriers: [0] },
+    { name: '(2+3+4)→1', mods: [[1, 2, 3], [], [], []], carriers: [0] },
+    { name: '2→1 + 4→3', mods: [[1], [], [3], []], carriers: [0, 2] },
+    { name: '4→(1, 2, 3)', mods: [[3], [3], [3], []], carriers: [0, 1, 2] },
+    { name: '1 + 4→3→2', mods: [[], [2], [3], []], carriers: [0, 1] },
+    { name: '1+2+3+4', mods: [[], [], [], []], carriers: [0, 1, 2, 3] },
+  ];
+  const algoKnob = (a) => a / (ALGORITHMS.length - 1);
+
+  const DEFAULTS = [0.8, 0.0, 0.5, 0.5, 0.2, 0.5, 0.5, 1.0, 0.0, 0.0,
+    ratioKnob(1), ratioKnob(1), ratioKnob(3), ratioKnob(1),
+    1.0, 0.25, 0.0, 0.0,
+    1.0, 0.15, 0.2, 0.2,
+    0.0, algoKnob(0)];
+
+  // Older saved steps had only the ten sine-kick knobs: fill in the FM part.
+  const upgrade = (p) => (p.length >= NUM_PARAMS ? p : p.concat(DEFAULTS.slice(p.length)));
 
   const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -72,6 +106,14 @@ function SineKickDSP() {
     decayRow: (p) => p[8] * CURVE_MAX_ROW,
     sweepRow: (p) => p[9] * CURVE_MAX_ROW,
     lengthS: (p) => (P.attackMs(p) + P.decayMs(p)) / 1000 + P.holdS(p),
+    ratio: (p, op) => RATIOS[Math.round(p[RATIO + op] * (RATIOS.length - 1))],
+    // carriers: output gain; modulators: modulation index in radians (0..10, squared for fine low end)
+    level: (p, op) => p[LEVEL + op],
+    index: (p, op) => p[LEVEL + op] * p[LEVEL + op] * 10,
+    // time to fall 60 dB
+    opDecayMs: (p, op) => 5 + 2995 * p[OPDECAY + op] * p[OPDECAY + op],
+    feedback: (p) => p[FEEDBACK] * 1.5,
+    algorithm: (p) => Math.round(p[ALGO] * (ALGORITHMS.length - 1)),
   };
 
   // Factors the plugin derives from the sample rate; both exactly 1 at 44.1 kHz.
@@ -101,11 +143,18 @@ function SineKickDSP() {
       this.phase = 0; this.velocity = 1; this.keytrack = 1;
       this.envSmooth = 0; this.declickSrc = 0; this.declick = 0; this.lastOut = 0;
       this.freqNow = 0;
+      this.opPhase = new Float64Array(4);
+      this.opEnv = new Float64Array(4);
+      this.opCoef = new Float64Array(4);
+      this.opRatio = new Float64Array(4);
+      this.opOut = new Float64Array(4);
+      this.fb1 = 0; this.fb2 = 0;
       this.setParams(DEFAULTS.slice());
       this.settle();
     }
 
     setParams(p) {
+      p = upgrade(p);
       this.params = p;
       const spm = this.sr * 0.001;
       this.attackInc = 1 / (P.attackMs(p) * spm);
@@ -117,6 +166,17 @@ function SineKickDSP() {
       this.tSweepRow = P.sweepRow(p);
       this.startHz = P.startHz(p);
       this.endHz = P.endHz(p);
+      this.algo = ALGORITHMS[P.algorithm(p)];
+      this.isCarrier = [0, 1, 2, 3].map((j) => this.algo.carriers.includes(j));
+      this.opAmt = [0, 1, 2, 3].map((j) => (this.isCarrier[j] ? P.level(p, j) : P.index(p, j)));
+      let sum = 0;
+      for (const c of this.algo.carriers) sum += P.level(p, c);
+      this.norm = 1 / Math.max(1, sum);
+      this.fbAmt = P.feedback(p);
+      for (let j = 0; j < 4; j++) {
+        this.opRatio[j] = P.ratio(p, j);
+        this.opCoef[j] = Math.exp(Math.log(0.001) / (P.opDecayMs(p, j) * spm));
+      }
     }
 
     // Jump every glide straight to the knob values (the plugin does this at start-up).
@@ -132,6 +192,9 @@ function SineKickDSP() {
       this.keytrack = Math.pow(2, (note - 48) / 12);
       this.velocity = velocity;
       this.phase = 0;
+      this.opPhase.fill(0);
+      this.opEnv.fill(1);
+      this.fb1 = 0; this.fb2 = 0;
       this.holdCount = 0;
       this.freqNow = this.startHz;
       this.active = true;
@@ -156,8 +219,25 @@ function SineKickDSP() {
         const shape = lookup(t.falling, this.sweepRow, this.sweepPos);
         const freq = (this.startHz - this.endHz) * shape + this.endHz * this.keytrack;
         this.freqNow = freq;
-        osc = Math.sin(this.phase);
-        this.phase += (1 / (this.sr / freq)) * TAU;
+        // four FM operators, computed from op 4 down so modulators are ready first
+        const w = TAU * freq / this.sr;
+        const mods = this.algo.mods, o = this.opOut;
+        osc = 0;
+        for (let j = 3; j >= 0; j--) {
+          let pm = 0;
+          const m = mods[j];
+          for (let k = 0; k < m.length; k++) pm += o[m[k]];
+          if (j === 3 && this.fbAmt > 0) pm += this.fbAmt * (this.fb1 + this.fb2) * 0.5;
+          const s = Math.sin(this.opPhase[j] + pm);
+          if (j === 3) { this.fb2 = this.fb1; this.fb1 = s; }
+          const e = this.opEnv[j];
+          this.opEnv[j] = e * this.opCoef[j];
+          this.opPhase[j] += w * this.opRatio[j];
+          if (this.isCarrier[j]) { o[j] = 0; osc += s * e * this.opAmt[j]; }
+          else o[j] = s * e * this.opAmt[j];
+        }
+        osc *= this.norm;
+        this.phase += w;
 
         // amplitude envelope
         switch (this.stage) {
@@ -259,14 +339,30 @@ function SineKickDSP() {
       case 2: case 6: return (1000 * (0.001 + 0.999 * v * v * v)).toFixed(1) + ' ms';
       case 4: { const hz = P.startHz(p); return hz.toFixed(2) + ' Hz (' + noteName(hz) + ')'; }
       case 5: { const hz = P.endHz(p); return hz.toFixed(2) + ' Hz (' + noteName(hz) + ')'; }
+      case 7: case 8: case 9: break;
+      case FEEDBACK: return Math.round(v * 100) + '%';
+      case ALGO: return (P.algorithm(p) + 1) + ': ' + ALGORITHMS[P.algorithm(p)].name;
       default:
+        if (i >= RATIO && i < LEVEL) return '×' + P.ratio(p, i - RATIO);
+        if (i >= LEVEL && i < OPDECAY) {
+          const op = i - LEVEL;
+          const car = ALGORITHMS[P.algorithm(p)].carriers.includes(op);
+          return car ? Math.round(v * 100) + '% out' : 'idx ' + P.index(p, op).toFixed(2);
+        }
+        if (i >= OPDECAY && i < FEEDBACK) {
+          const ms = P.opDecayMs(p, i - OPDECAY);
+          return ms >= 1000 ? (ms / 1000).toFixed(2) + ' s' : ms.toFixed(0) + ' ms';
+        }
+    }
+    {
         if (v === 0.5) return 'Linear';
         if (v > 0.5) return '+' + Math.trunc((2 * v - 1) * 100) + '% Convex';
         return '-' + Math.trunc((1 - 2 * v) * 100) + '% Concave';
     }
   }
 
-  return { CURVE_ROWS, CURVE_COLS, KEYS, DEFAULTS, makeTables, lookup, P, rateFactors,
+  return { CURVE_ROWS, CURVE_COLS, KEYS, NUM_PARAMS, RATIO, LEVEL, OPDECAY, FEEDBACK, ALGO,
+    RATIOS, ratioKnob, ALGORITHMS, algoKnob, upgrade, DEFAULTS, makeTables, lookup, P, rateFactors,
     Voice, render, samplesPerStep, renderPattern, noteName, display };
 }
 

@@ -90,3 +90,17 @@ input[type=range] { accent-color: var(--accent); width: 90px; }
   .mid { height: 200px; }
   .pad { width: 120px; }
 }
+
+.logo small { font-size: 11px; color: var(--dim); font-weight: 600; letter-spacing: .1em; }
+.knob.fm .val { color: rgb(150, 225, 130); }
+.kgroup.op h3 .car { color: var(--accent); margin-left: 4px; }
+.kgroup.op h3 .mod { color: rgb(150, 225, 130); margin-left: 4px; }
+.kgroup.algo { flex: 2 1 0; min-width: 170px; padding: 8px 10px; gap: 10px; justify-content: flex-start; }
+.kgroup.algo h3 { margin: 0 0 2px; }
+.algorow { display: flex; gap: 6px; align-items: center; }
+.algorow select { flex: 1; min-width: 0; font-size: 14px; }
+.legend { color: var(--dim); font-size: 11px; }
+.legend b { display: block; color: rgb(150, 225, 130); font: 600 17px ui-monospace, Menlo, monospace; margin-bottom: 4px; white-space: nowrap; }
+#ops .knob { min-width: 56px; }
+#ops .knob svg { width: 56px; height: 56px; }
+#ops { flex-wrap: wrap; }

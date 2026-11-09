@@ -1,4 +1,4 @@
-// node test.js  — mirrors the Rust test in app/src/dsp.rs plus sequencer checks.
+// node test.js: engine, FM and sequencer checks.
 const assert = require('assert');
 const D = require('./dsp.js')();
 const t = D.makeTables();
@@ -21,4 +21,18 @@ for (const s of [0, 4, 8, 12]) {
   const seg = buf.subarray(s * stepLen, s * stepLen + 2000);
   assert(seg.reduce((m, x) => Math.max(m, Math.abs(x)), 0) > 0.3, 'hit at step ' + s);
 }
+// every preset and every algorithm renders cleanly
+for (const [name, p] of presets) {
+  const { out } = D.render(p, 48000, t);
+  const pk = out.reduce((m, x) => Math.max(m, Math.abs(x)), 0);
+  assert(out.every(Number.isFinite) && pk > 0.3 && pk <= 1, name + ' peak ' + pk);
+}
+for (let a = 0; a < D.ALGORITHMS.length; a++) {
+  const p = D.DEFAULTS.slice(); p[D.ALGO] = D.algoKnob(a);
+  for (let j = 1; j < 4; j++) p[D.LEVEL + j] = 0.6;
+  p[D.FEEDBACK] = 1;
+  assert(D.render(p, 44100, t).out.every(Number.isFinite), 'algorithm ' + a);
+}
+// old 10-knob steps still load
+assert.strictEqual(D.upgrade([0.8, 0, 0.5, 0.5, 0.2, 0.5, 0.5, 1, 0, 0]).length, D.NUM_PARAMS);
 console.log('ok  peak', peak.toFixed(3), 'start', p[0].toFixed(2), 'pattern samples', buf.length);
